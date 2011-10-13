@@ -12,12 +12,7 @@
           <property name="defaultCharset" value="UTF-8"/>
           <property name="targets">
                <map>
-                <entry key="extractorapp" value="${proxy.extractorapp.target}" />
-                <!-- entry key="gssec" value="${proxy.geoserver-security.target}" / -->
-                <entry key="mapfishapp" value="${proxy.mapfishapp.target}" />
-                <entry key="geonetwork" value="${proxy.geonetwork.target}" />
-                <entry key="geoserver" value="${proxy.geoserver.target}" />
-                <entry key="test" value="${test.url}" />
+@proxy.mapping@
                </map>
           </property>
           <property name="requireCharsetContentTypes">
