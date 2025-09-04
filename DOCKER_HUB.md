@@ -14,13 +14,13 @@
 # Quick reference
 
 -	**Where to file issues**:  
-     [https://github.com/georchestra/georchestra/issues](https://github.com/georchestra/georchestra/issues)
+     [https://github.com/georchestra/security-proxy/issues](https://github.com/georchestra/security-proxy/issues)
 
 -	**Supported architectures**:   
      [`amd64`](https://hub.docker.com/r/amd64/docker/)
 
 -	**Source of this description**:  
-     [docs repo's `security-proxy/` directory](https://github.com/georchestra/georchestra/blob/master/security-proxy/DOCKER_HUB.md)
+     [repo's directory](https://github.com/georchestra/security-proxy/blob/main/DOCKER_HUB.md)
 
 # What is `georchestra/security-proxy`
 
