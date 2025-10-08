@@ -56,7 +56,7 @@ jobs:
         username: ${{ secrets.DOCKER_HUB_USERNAME }}
         password: ${{ secrets.DOCKER_HUB_PASSWORD }}
         repository: georchestra/security-proxy
-        readme-filepath: ./security-proxy/DOCKER_HUB.md
+        readme-filepath: ./DOCKER_HUB.md
         short-description: 'Security-proxy module for the geOrchestra SDI'
 
     - name: "Pushing latest to docker.io"
