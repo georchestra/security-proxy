@@ -706,12 +706,27 @@ public class Proxy {
                     String user = authentication.getName();
                     if (!user.equals("anonymousUser")) {
                         user = user.toLowerCase();
+/*
+                        // those attributes are not used yet by analytics so don't fetch user object
+                        Optional<GeorchestraUser> usr = usersApi.findByUsername(user);
+                        if (usr.isPresent()) {
+                            GeorchestraUser finalUser = usr.get();
+                            MDC.put("enduser.uuid", finalUser.getId());
+                            MDC.put("enduser.lastname", finalUser.getLastName());
+                            MDC.put("enduser.firstname", finalUser.getFirstName());
+                        }
+                        // org uuid is unused yet, so don't fetch org object
+                        MDC.put("enduser.org.uuid", xxx);
+                        MDC.put("enduser.org.fullname", xxx);
+*/
                     }
                     statsLogger.info(OGCServiceMessageFormatter.format(user, sURL, org, roles));
                     auth_info = String.format("%s|%s|%s", user, org, String.join(",", roles));
-                    MDC.put("user.id", user);
-                    MDC.put("user.roles", String.join(",", roles));
-                    MDC.put("user.org.id", org);
+                    MDC.put("application.name", "security-proxy");
+                    MDC.put("enduser.id", user);
+                    MDC.put("enduser.roles", String.join(",", roles));
+                    MDC.put("enduser.org.id", org);
+                    MDC.put("enduser.auth-method", "sec-proxy");
 
                 }
 
@@ -725,6 +740,7 @@ public class Proxy {
             String requestMethod = request.getMethod();
             String size = getHeaderValue(proxiedResponse.getFirstHeader("Content-Length"));
             String userAgent = getHeaderValue(proxyingRequest.getFirstHeader("User-Agent"));
+            String referer = getHeaderValue(proxyingRequest.getFirstHeader("Referer"));
             // Use date format compatible with standard Apache Common Log Format
             DateFormat formatter = new SimpleDateFormat("dd/MMM/yyyy:HH:mm:ss Z", Locale.US);
             String formattedDate = formatter.format(new java.util.Date());
@@ -737,8 +753,21 @@ public class Proxy {
             // "<request_user_agent>" <number_of_requests_received_since_Traefik_started>
             // "<Traefik_router_name>" "<Traefik_server_URL>" <request_duration_in_ms>ms
             // cf https://doc.traefik.io/traefik/observability/access-logs/
-            MDC.put("requestDuration", requestDuration);
-            MDC.put("statusCode", statusCode);
+            MDC.put("http.response.duration_ms", requestDuration);
+            MDC.put("http.response.body.size_bytes", size);
+            MDC.put("http.status_code", statusCode);
+            MDC.put("http.request.method", requestMethod);
+            MDC.put("http.request.header.User-Agent", userAgent);
+            MDC.put("http.request.header.Referer", referer);
+            MDC.put("http.request.query-string", ( request.getQueryString() == null ? "" : request.getQueryString()));
+            MDC.put("http.request.path", request.getRequestURI());
+            Enumeration<String> queryParams = request.getParameterNames();
+            while (queryParams.hasMoreElements()) {
+                String paramName = queryParams.nextElement();
+                String[] paramValues = request.getParameterValues(paramName);
+                MDC.put("http.request.parameter." + paramName, paramValues[0]); // XXX only one value
+            }
+
             accessLogger.info(String.format("%s - %s [%s] \"%s %s %s\" %s %s \"-\" \"%s\" - \"%s\" \"-\" %dms",
                     request.getRemoteAddr(), auth_info, formattedDate, requestMethod, sURL, request.getProtocol(),
                     statusCode, size, userAgent, targetServiceName, requestDuration));
