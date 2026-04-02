@@ -44,6 +44,7 @@ import org.apache.http.nio.protocol.BasicAsyncRequestProducer;
 import org.apache.http.nio.protocol.HttpAsyncRequestProducer;
 import org.apache.http.nio.protocol.HttpAsyncResponseConsumer;
 import org.apache.http.protocol.HttpContext;
+import org.apache.log4j.MDC;
 import org.georchestra.commons.configuration.GeorchestraConfiguration;
 import org.georchestra.ds.DataServiceException;
 import org.georchestra.ogcservstatistics.log4j.OGCServiceMessageFormatter;
@@ -84,6 +85,8 @@ import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
 import java.nio.charset.Charset;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -131,6 +134,7 @@ public class Proxy {
 
     protected static final Log logger = LogFactory.getLog(Proxy.class.getPackage().getName());
     protected static final Log statsLogger = LogFactory.getLog(Proxy.class.getPackage().getName() + ".statistics");
+    protected static final Log accessLogger = LogFactory.getLog(Proxy.class.getPackage().getName() + ".accesslog");
     private static final org.apache.http.client.RedirectStrategy NO_REDIRECT_STRATEGY = new org.apache.http.client.RedirectStrategy() {
         @Override
         public boolean isRedirected(HttpRequest httpRequest, HttpResponse httpResponse, HttpContext httpContext)
@@ -623,6 +627,15 @@ public class Proxy {
     }
 
     /**
+     * Try to get the User Agent size out of request headers
+     *
+     * @param header: User-agent headers (array)
+     */
+    private String getHeaderValue(org.apache.http.Header header) {
+        return header == null ? "-" : header.getValue();
+    }
+
+    /**
      * Actually do the request to the proxified server.
      *
      * @param request       the original request
@@ -663,11 +676,15 @@ public class Proxy {
 
             logger.debug("Final request -- " + sURL);
 
+            // Time the request
+            long start_timestamp = System.currentTimeMillis();
+
             HttpRequestBase proxyingRequest = makeRequest(request, sURL);
             String targetServiceName = findMatchingTarget(request);
             logger.debug("Gathering headers for service " + targetServiceName);
             headerManagement.configureRequestHeaders(request, proxyingRequest, localProxy, targetServiceName);
 
+            String auth_info = "";
             try {
                 Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
                 Header[] originalHeaders = proxyingRequest.getHeaders(SEC_ORGNAME);
@@ -689,8 +706,27 @@ public class Proxy {
                     String user = authentication.getName();
                     if (!user.equals("anonymousUser")) {
                         user = user.toLowerCase();
+/*
+                        // those attributes are not used yet by analytics so don't fetch user object
+                        Optional<GeorchestraUser> usr = usersApi.findByUsername(user);
+                        if (usr.isPresent()) {
+                            GeorchestraUser finalUser = usr.get();
+                            MDC.put("enduser.uuid", finalUser.getId());
+                            MDC.put("enduser.lastname", finalUser.getLastName());
+                            MDC.put("enduser.firstname", finalUser.getFirstName());
+                        }
+                        // org uuid is unused yet, so don't fetch org object
+                        MDC.put("enduser.org.uuid", xxx);
+                        MDC.put("enduser.org.fullname", xxx);
+*/
                     }
                     statsLogger.info(OGCServiceMessageFormatter.format(user, sURL, org, roles));
+                    auth_info = String.format("%s|%s|%s", user, org, String.join(",", roles));
+                    MDC.put("application.name", "security-proxy");
+                    MDC.put("enduser.id", user);
+                    MDC.put("enduser.roles", String.join(",", roles));
+                    MDC.put("enduser.org.id", org);
+                    MDC.put("enduser.auth-method", "sec-proxy");
 
                 }
 
@@ -701,6 +737,42 @@ public class Proxy {
             proxiedResponse = executeHttpRequest(httpclient, proxyingRequest);
             StatusLine statusLine = proxiedResponse.getStatusLine();
             statusCode = statusLine.getStatusCode();
+            String requestMethod = request.getMethod();
+            String size = getHeaderValue(proxiedResponse.getFirstHeader("Content-Length"));
+            String userAgent = getHeaderValue(proxyingRequest.getFirstHeader("User-Agent"));
+            String referer = getHeaderValue(proxyingRequest.getFirstHeader("Referer"));
+            // Use date format compatible with standard Apache Common Log Format
+            DateFormat formatter = new SimpleDateFormat("dd/MMM/yyyy:HH:mm:ss Z", Locale.US);
+            String formattedDate = formatter.format(new java.util.Date());
+            long requestDuration = System.currentTimeMillis() - start_timestamp;
+            // Let's get inspired by the CLF logs format as they are also returned by
+            // Traefik:
+            // <remote_IP_address> - <client_user_name_if_available> [<timestamp>]
+            // "<request_method> <request_path> <request_protocol>"
+            // <origin_server_HTTP_status> <origin_server_content_size> "<request_referrer>"
+            // "<request_user_agent>" <number_of_requests_received_since_Traefik_started>
+            // "<Traefik_router_name>" "<Traefik_server_URL>" <request_duration_in_ms>ms
+            // cf https://doc.traefik.io/traefik/observability/access-logs/
+            MDC.put("http.response.duration_ms", requestDuration);
+            MDC.put("http.response.body.size_bytes", size);
+            MDC.put("http.status_code", statusCode);
+            MDC.put("http.request.method", requestMethod);
+            MDC.put("http.request.header.User-Agent", userAgent);
+            MDC.put("http.request.header.Referer", referer);
+            MDC.put("http.request.query-string", ( request.getQueryString() == null ? "" : request.getQueryString()));
+            MDC.put("http.request.path", request.getRequestURI());
+            Enumeration<String> queryParams = request.getParameterNames();
+            while (queryParams.hasMoreElements()) {
+                String paramName = queryParams.nextElement();
+                String[] paramValues = request.getParameterValues(paramName);
+                MDC.put("http.request.parameter." + paramName, paramValues[0]); // XXX only one value
+            }
+
+            accessLogger.info(String.format("%s - %s [%s] \"%s %s %s\" %s %s \"-\" \"%s\" - \"%s\" \"-\" %dms",
+                    request.getRemoteAddr(), auth_info, formattedDate, requestMethod, sURL, request.getProtocol(),
+                    statusCode, size, userAgent, targetServiceName, requestDuration));
+
+            MDC.clear();
             String reasonPhrase = statusLine.getReasonPhrase();
 
             if (reasonPhrase != null && statusCode >= 400) {
